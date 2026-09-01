@@ -238,7 +238,7 @@ under the License.
             <widgets>
                 <decorator-screen name="CommonRecruitmentDecorator" location="${parameters.mainDecoratorLocation}">
                     <decorator-section name="body">
-                        <include-menu name="InternalJobPostingTabBar" location=" ${parameters.mainMenuLocation}"/>
+                        <include-menu name="InternalJobPostingTabBar" location="${parameters.mainMenuLocation}"/>
                         <section>
                             <condition>
                                 <if-has-permission permission="HUMANRES" action="_VIEW"/>
