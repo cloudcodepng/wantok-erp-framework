@@ -97,6 +97,7 @@ COPY --chmod=444 docker/disable-component.xslt .
 RUN mkdir templates
 COPY --chmod=444 docker/templates templates
 
+EXPOSE 8080
 EXPOSE 8443
 EXPOSE 8009
 EXPOSE 5005
