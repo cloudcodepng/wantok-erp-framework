@@ -428,7 +428,36 @@ Map setShipmentSettingsFromFacilities() {
         }
     }
     if (shipment != shipmentCopy) {
-        run service: 'updateShipment', with: shipment.getAllFields()
+        // SHONG immediate walk-in POS only: no shipping schedule or delivery.
+        // Only facility contact/phone fields were changed above; persist them
+        // without a redundant updateShipment service round-trip (including
+        // unnecessary status checks and work-effort checks for unchanged status).
+        // All actual SHONG POS shipment transitions still use updateShipment,
+        // preserving PACKED -> invoicing and SHIPPED native ECAs.
+        boolean shongWalkIn = shipment.primaryOrderId
+                && shipment.primaryShipGroupSeqId
+                && shipment.originFacilityId == '10000'
+                && !shipment.destinationFacilityId
+                && shipment.statusId == 'SHIPMENT_INPUT'
+                && !shipment.estimatedShipDate
+                && !shipment.estimatedArrivalDate
+                && delegator.getDelegatorName()?.endsWith('#SHONG')
+        if (shongWalkIn) {
+            GenericValue posOrder = from('OrderHeader').where(orderId: shipment.primaryOrderId).queryOne()
+            shongWalkIn = posOrder?.orderTypeId == 'SALES_ORDER'
+                    && posOrder?.productStoreId == '10000'
+                    && posOrder?.salesChannelEnumId == 'POS_SALES_CHANNEL'
+                    && posOrder?.externalId?.startsWith('POS-')
+        }
+        if (shongWalkIn) {
+            shipment.lastModifiedDate = UtilDateTime.nowTimestamp()
+            shipment.lastModifiedByUserLogin = userLogin.userLoginId
+            shipment.store()
+            logInfo("SHONG POS walk-in shipment ${shipment.shipmentId}: " +
+                    'facility contact details stored without redundant updateShipment service')
+        } else {
+            run service: 'updateShipment', with: shipment.getAllFields()
+        }
     }
     return success()
 }

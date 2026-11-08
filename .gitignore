@@ -38,3 +38,7 @@ desktop.ini
 *.patch
 node_modules/
 /docs/asciidoc/images/
+
+# Wantok ERP local patch backups
+applications/accounting/minilang/ledger/.v396_refund_gl_backup_*/
+applications/order/template/return/*.v361-backup-*

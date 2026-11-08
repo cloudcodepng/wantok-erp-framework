@@ -457,8 +457,12 @@ public final class LoginWorker {
         // if a tenantId was passed in, see if the userLoginId is associated with that tenantId
         // (can use any delegator for this, entity is not tenant-specific)
         String tenantId = request.getParameter("userTenantId");
-        if (UtilValidate.isEmpty(tenantId)) {
-            tenantId = (String) request.getAttribute("userTenantId");
+        // Align with ContextFilter: when this request already carries a resolved userTenantId
+        // attribute (for example from a hostname mapped to a tenant), that value wins over a
+        // conflicting request parameter, so both components authenticate against the same tenant.
+        String requestTenantId = (String) request.getAttribute("userTenantId");
+        if (UtilValidate.isNotEmpty(requestTenantId)) {
+            tenantId = requestTenantId;
         }
         if (UtilValidate.isNotEmpty(tenantId)) {
             // see if we need to activate a tenant delegator, only do if the current delegatorName has a hash symbol in it,
@@ -474,8 +478,12 @@ public final class LoginWorker {
             if (delegatorNameHashIndex == -1 || (currentDelegatorTenantId != null && !tenantId.equals(currentDelegatorTenantId))) {
                 // make that tenant active, setup a new delegator and a new dispatcher
                 String delegatorName = delegator.getDelegatorBaseName() + "#" + tenantId;
+                Delegator baseDelegator = DelegatorFactory.getDelegator(delegator.getDelegatorBaseName());
 
                 try {
+                    if (!WebAppUtil.isValidTenantId(baseDelegator, tenantId)) {
+                        throw new NullPointerException("Tenant [" + tenantId + "] not found");
+                    }
                     // after this line the delegator is replaced with the new per-tenant delegator
                     delegator = DelegatorFactory.getDelegator(delegatorName);
                     dispatcher = WebAppUtil.makeWebappDispatcher(servletContext, delegator);

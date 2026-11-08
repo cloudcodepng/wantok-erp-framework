@@ -633,6 +633,15 @@ Map createPaymentFromOrder() {
                 .where([EntityCondition.makeCondition('orderId', orderHeader.orderId),
                         EntityCondition.makeCondition('statusId', EntityOperator.NOT_EQUAL, 'PAYMENT_CANCELLED')])
                 .queryCount() > 0) {
+            // The CASH/EFTPOS preference already has a received SHONG POS payment.
+            // Do not treat native completion as a second-payment error.
+            // Preserve historical behavior for NEA and other order flows.
+            if (delegator.getDelegatorName().endsWith('#SHONG') &&
+                    orderHeader.externalId?.startsWith('POS-') &&
+                    orderHeader.orderTypeId == 'SALES_ORDER') {
+                logInfo("SHONG POS receipt exists for ${orderHeader.orderId}; skipping unpaid duplicate")
+                return success()
+            }
             return failure("Payment not created for order ${orderHeader.orderId}, at least a single payment already exists")
         }
 
