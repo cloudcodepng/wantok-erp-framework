@@ -64,7 +64,7 @@ under the License.
           <#local rowCount = rowCount + 1>
           <#local rowCountForAdjRemove = rowCountForAdjRemove + 1>
        </#if>
-       <#local returnTotal = returnTotal + returnAdjustment.amount?default(0)>
+       <#assign returnTotal = returnTotal + returnAdjustment.amount?default(0)>
     </tr>
 </#macro>
 

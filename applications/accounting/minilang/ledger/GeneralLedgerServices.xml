@@ -1806,6 +1806,8 @@ under the License.
                 <condition-list>
                     <condition-expr field-name="invoiceItemTypeId" operator="not-equals" value="INV_SALES_TAX"/>
                     <condition-expr field-name="invoiceItemTypeId" operator="not-equals" value="ITM_SALES_TAX"/>
+                    <!-- Native customer-return tax credit has its own tax-account debit below. -->
+                    <condition-expr field-name="invoiceItemTypeId" operator="not-equals" value="CRT_SALES_TAX_ADJ"/>
                     <condition-expr field-name="invoiceId" operator="equals" from-field="parameters.invoiceId"/>
                 </condition-list>
             </entity-condition>
@@ -1871,9 +1873,18 @@ under the License.
                     <set field="debitEntry.origCurrencyUomId" from-field="invoice.currencyUomId"/>
                     <set field="debitEntry.partyId" from-field="taxAuthPartyId"/>
                     <set field="debitEntry.roleTypeId" value="TAX_AUTHORITY"/>
-                    <set field="debitEntry.glAccountTypeId" from-field="TAX_ACCOUNT"/>
-
-                    <set field="acctgTransEntries[]" from-field="debitEntry" type="Object"/>
+                    <!-- The tax invoice line is excluded from the regular product loop.
+                         This attributed tax debit must go to the IRC tax liability account. -->
+                    <set field="debitEntry.glAccountTypeId" value="TAX_ACCOUNT"/>
+                    <entity-one entity-name="TaxAuthorityGlAccount" value-field="taxAuthorityGlAccount">
+                        <field-map field-name="taxAuthGeoId"/>
+                        <field-map field-name="taxAuthPartyId"/>
+                        <field-map field-name="organizationPartyId" from-field="invoice.partyId"/>
+                    </entity-one>
+                    <set field="debitEntry.glAccountId" from-field="taxAuthorityGlAccount.glAccountId"/>
+                    <if-compare field="taxAmount" operator="not-equals" value="0" type="BigDecimal">
+                        <set field="acctgTransEntries[]" from-field="debitEntry" type="Object"/>
+                    </if-compare>
                     <calculate field="invoiceTaxTotal" decimal-scale="${ledgerDecimals}" rounding-mode="${roundingMode}">
                         <calcop operator="add">
                             <calcop operator="get" field="invoiceTaxTotal"/>
@@ -1895,7 +1906,10 @@ under the License.
             <set field="debitEntry.origAmount" from-field="taxAmount"/>
             <set field="debitEntry.origCurrencyUomId" from-field="invoice.currencyUomId"/>
             <set field="debitEntry.glAccountTypeId" value="TAX_ACCOUNT"/>
-            <set field="acctgTransEntries[]" from-field="debitEntry" type="Object"/>
+            <!-- Do not create zero-value tax GL rows for attributed-only GST. -->
+            <if-compare field="taxAmount" operator="not-equals" value="0" type="BigDecimal">
+                <set field="acctgTransEntries[]" from-field="debitEntry" type="Object"/>
+            </if-compare>
             <calculate field="invoiceTaxTotal" decimal-scale="${ledgerDecimals}" rounding-mode="${roundingMode}">
                 <calcop operator="add">
                     <calcop operator="get" field="invoiceTaxTotal"/>
@@ -2329,8 +2343,23 @@ under the License.
             <!-- Credit -->
             <make-value entity-name="AcctgTransEntry" value-field="creditEntry"/>
             <set field="creditEntry.debitCreditFlag" value="C"/>
-            <!-- TODO -->
-            <!--set field="creditEntry.glAccountTypeId" from-field=""/-->
+            <!-- Standalone EFTPOS refunds clear the card-settlement asset account.
+                 Restrict this to CUSTOMER_REFUND/CREDIT_CARD; other disbursement
+                 types retain their existing account-resolution behavior. -->
+            <if-compare field="payment.paymentTypeId" operator="equals" value="CUSTOMER_REFUND">
+                <set field="posCashRefund" type="Boolean" value="false"/>
+                <if-compare field="payment.paymentMethodTypeId" operator="equals" value="CREDIT_CARD">
+                    <set field="creditEntry.glAccountTypeId" value="MRCH_STLMNT_ACCOUNT"/>
+                </if-compare>
+                <if-compare field="payment.paymentMethodTypeId" operator="equals" value="CASH">
+                    <!-- Only POS-managed cash refunds use the POSR- receipt marker. -->
+                    <if-regexp field="payment.paymentRefNum" expr="^(POSR-(R-|VOID-)|V396-PAYOUT-|V396-CREF-)[A-Za-z0-9_-]+$">
+                        <set field="posCashRefund" type="Boolean" value="true"/>
+                        <set field="creditEntry.glAccountId" from-field="payment.overrideGlAccountId"/>
+                        <log level="info" message="WANERP POS CASH CREDIT GL branch payment=${payment.paymentId} sourceAccount=${payment.overrideGlAccountId}"/>
+                    </if-regexp>
+                </if-compare>
+            </if-compare>
             <set field="creditEntry.origAmount" from-field="payment.amount"/>
             <set field="creditEntry.origCurrencyUomId" from-field="payment.currencyUomId"/>
             <set field="creditEntry.organizationPartyId" from-field="payment.partyIdFrom"/>
@@ -2381,7 +2410,26 @@ under the License.
                 <set field="debitEntryWithDiffAmount.debitCreditFlag" value="D"/>
                 <set field="debitEntryWithDiffAmount.origAmount" from-field="amount"/>
                 <set field="debitEntryWithDiffAmount.origCurrencyUomId" from-field="payment.currencyUomId"/>
+                <!-- Native payment override is normally used for the debit.
+                     Preserve that behavior for all ordinary OFBiz payments. -->
                 <set field="debitEntryWithDiffAmount.glAccountId" from-field="payment.overrideGlAccountId"/>
+                <!-- POS-managed CASH refunds instead debit the organization's A/R
+                     and credit the original receipt cash asset. Re-resolve the
+                     A/R default explicitly: the earlier Boolean flag condition
+                     permitted the cash override to leak into BOTH GL entries. -->
+                <if-compare field="payment.paymentTypeId" operator="equals" value="CUSTOMER_REFUND">
+                    <if-compare field="payment.paymentMethodTypeId" operator="equals" value="CASH">
+                        <if-regexp field="payment.paymentRefNum" expr="^(POSR-(R-|VOID-)|V396-PAYOUT-|V396-CREF-)[A-Za-z0-9_-]+$">
+                            <entity-one entity-name="GlAccountTypeDefault" value-field="posCashRefundReceivableDefault" use-cache="true">
+                                <field-map field-name="organizationPartyId" from-field="organizationPartyId"/>
+                                <field-map field-name="glAccountTypeId" value="ACCOUNTS_RECEIVABLE"/>
+                            </entity-one>
+                            <clear-field field="debitEntryWithDiffAmount.glAccountId"/>
+                            <set field="debitEntryWithDiffAmount.glAccountId" from-field="posCashRefundReceivableDefault.glAccountId"/>
+                            <log level="info" message="WANERP POS CASH DEBIT GL branch payment=${payment.paymentId} receivableAccount=${posCashRefundReceivableDefault.glAccountId}"/>
+                        </if-regexp>
+                    </if-compare>
+                </if-compare>
                 <set field="debitEntryWithDiffAmount.glAccountTypeId" from-field="debitGlAccountTypeId"/>
                 <set field="debitEntryWithDiffAmount.organizationPartyId" from-field="organizationPartyId"/>
                 <set field="acctgTransEntries[]" from-field="debitEntryWithDiffAmount" type="Object"/>
